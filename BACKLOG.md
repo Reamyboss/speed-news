@@ -17,9 +17,6 @@ in `README.md`; if it is listed here, it is **not** built yet.
 - No search suggestions or autocomplete.
 
 ### Database
-- **Prisma migrations.** The project uses `prisma db push`, which is correct for
-  a greenfield schema but gives no migration history. Generate an initial
-  migration before the schema changes in production.
 - No read replica or connection pooling config (add PgBouncer/Prisma Accelerate
   when traffic justifies it).
 - No retention policy. Stories accumulate indefinitely; add an archival job.
