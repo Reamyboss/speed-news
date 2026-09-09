@@ -34,3 +34,6 @@ probe-report.json
 
 # Clustering evaluation dumps (derived from the database, regenerate locally)
 tools/*.json
+
+# Local scratch output from verification runs
+.scratch/
