@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPlatformHealth } from "@/lib/queries";
 import { getAiProvider } from "@/lib/ai";
+import { productionConfigIssues } from "@/lib/env";
 
 /**
  * Operational health endpoint for uptime checks and deploy verification.
@@ -16,6 +17,8 @@ export async function GET() {
   try {
     const health = await getPlatformHealth();
     const provider = getAiProvider();
+    const configIssues = productionConfigIssues();
+    const blockers = configIssues.filter((issue) => issue.level === "blocker");
 
     const staleAfterHours = 6;
     // Publisher clocks run slightly ahead of ours often enough that a raw
@@ -29,7 +32,15 @@ export async function GET() {
 
     return NextResponse.json(
       {
-        status: hasContent ? (contentFresh ? "ok" : "stale") : "empty",
+        // A misconfigured deployment is not healthy even when it is serving
+        // cached content, so a blocker outranks the content signal.
+        status: blockers.length
+          ? "misconfigured"
+          : hasContent
+            ? contentFresh
+              ? "ok"
+              : "stale"
+            : "empty",
         checkedAt: new Date().toISOString(),
         latencyMs: Date.now() - started,
         content: {
@@ -50,6 +61,10 @@ export async function GET() {
           model: provider.model,
           available: provider.isAvailable,
         },
+        config: {
+          ok: blockers.length === 0,
+          issues: configIssues,
+        },
         lastIngestRun: health.lastRun
           ? {
               status: health.lastRun.status,
@@ -62,7 +77,7 @@ export async function GET() {
           : null,
       },
       {
-        status: hasContent ? 200 : 503,
+        status: blockers.length || !hasContent ? 503 : 200,
         headers: { "cache-control": "no-store, max-age=0" },
       },
     );

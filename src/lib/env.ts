@@ -72,6 +72,71 @@ export const CRON_SECRET = process.env.CRON_SECRET || "";
 
 export const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
+/**
+ * Configuration problems that matter in production.
+ *
+ * Reported by `/api/health` so a deploy can be verified with one request
+ * instead of discovering a missing variable when the first cron fires at 2am.
+ * Returns messages, never values — this response is public.
+ *
+ * The split matters: a BLOCKER means something is broken or unsafe, a WARNING
+ * means a feature is off. Running without AI is a supported mode, not a fault.
+ */
+export interface ConfigIssue {
+  level: "blocker" | "warning";
+  message: string;
+}
+
+export function productionConfigIssues(): ConfigIssue[] {
+  const issues: ConfigIssue[] = [];
+  if (!IS_PRODUCTION) return issues;
+
+  if (!CRON_SECRET) {
+    issues.push({
+      level: "blocker",
+      message:
+        "CRON_SECRET is not set. The pipeline endpoint refuses to run, so no new " +
+        "content will be ingested.",
+    });
+  } else if (CRON_SECRET.length < 16) {
+    issues.push({
+      level: "blocker",
+      message: "CRON_SECRET is shorter than 16 characters and is guessable.",
+    });
+  }
+
+  if (!process.env.DATABASE_URL) {
+    issues.push({ level: "blocker", message: "DATABASE_URL is not set." });
+  } else if (process.env.DATABASE_URL.startsWith("file:")) {
+    issues.push({
+      level: "blocker",
+      message:
+        "DATABASE_URL points at a SQLite file. Serverless instances do not share " +
+        "a filesystem, so writes will be lost. Use PostgreSQL in production.",
+    });
+  }
+
+  if (!process.env.NEXT_PUBLIC_SITE_URL) {
+    issues.push({
+      level: "warning",
+      message:
+        "NEXT_PUBLIC_SITE_URL is not set. Canonical URLs, sitemap and Open Graph " +
+        "tags will fall back to the deployment URL.",
+    });
+  }
+
+  if (!AI_CONFIG.apiKey && AI_CONFIG.provider !== "none") {
+    issues.push({
+      level: "warning",
+      message:
+        "No ANTHROPIC_API_KEY. Stories render with their extractive summaries and " +
+        "no AI briefing — a supported mode, not a fault.",
+    });
+  }
+
+  return issues;
+}
+
 /** Absolute URL helper used by metadata, sitemaps and structured data. */
 export function absoluteUrl(path = "/"): string {
   if (/^https?:\/\//i.test(path)) return path;

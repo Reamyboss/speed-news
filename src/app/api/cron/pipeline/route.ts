@@ -14,14 +14,23 @@ import { CRON_SECRET, IS_PRODUCTION } from "@/lib/env";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/**
+ * Authorises a pipeline trigger.
+ *
+ * The only accepted credential is the bearer token, because it is the only one
+ * a caller cannot simply assert. An earlier version short-circuited on the
+ * presence of an `x-vercel-cron` header, which any client can set with a
+ * single curl flag — that made the secret decorative for anyone who read the
+ * source. Vercel adds `Authorization: Bearer $CRON_SECRET` to its cron
+ * invocations automatically when the variable is set, so requiring the token
+ * costs nothing operationally and closes the hole.
+ *
+ * With no secret configured the endpoint runs only outside production. In
+ * production a missing secret is a refusal, not a default-open: an open
+ * trigger lets anyone force outbound fetches and AI spend on our account.
+ */
 function isAuthorised(request: NextRequest): boolean {
-  // Vercel signs its own cron invocations with this header.
-  if (request.headers.get("x-vercel-cron")) return true;
-
-  if (!CRON_SECRET) {
-    // Refuse to run unauthenticated in production even if misconfigured.
-    return !IS_PRODUCTION;
-  }
+  if (!CRON_SECRET) return !IS_PRODUCTION;
 
   const header = request.headers.get("authorization") ?? "";
   const provided = header.startsWith("Bearer ") ? header.slice(7) : "";
