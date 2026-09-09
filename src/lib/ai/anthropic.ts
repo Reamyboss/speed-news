@@ -18,16 +18,73 @@ import {
 /** Bounded so a pathological feed item cannot blow up a request. */
 const MAX_INPUT_CHARS = 4_000;
 
-interface AnthropicClientLike {
-  messages: {
-    create(body: Record<string, unknown>): Promise<{
-      content: Array<{ type: string; text?: string }>;
-      stop_reason?: string | null;
-      stop_details?: { category?: string | null; explanation?: string | null } | null;
-      model?: string;
-    }>;
+interface AnthropicResponseLike {
+  content: Array<{ type: string; text?: string }>;
+  stop_reason?: string | null;
+  stop_details?: { category?: string | null; explanation?: string | null } | null;
+  model?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
   };
 }
+
+interface AnthropicClientLike {
+  messages: {
+    create(body: Record<string, unknown>): Promise<AnthropicResponseLike>;
+  };
+}
+
+/**
+ * The response shape we ask the model for, as a JSON Schema.
+ *
+ * This is the same contract `aiEnrichmentSchema` enforces, expressed for
+ * `output_config.format` so the API constrains generation rather than us
+ * hoping the model returns clean JSON. Zod still validates the result
+ * afterwards: structured output guarantees the SHAPE, but the length limits
+ * and the entity-type vocabulary are ours to enforce, and a schema the model
+ * satisfies is not automatically a schema we accept.
+ */
+const OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: {
+      type: "string",
+      description: "2-3 sentences, max 600 characters. What happened, in plain language.",
+    },
+    whyItMatters: {
+      type: "string",
+      description:
+        "2-3 sentences, max 600 characters. Why a Nigerian reader should care — the practical " +
+        "consequence. If the material is too limited to establish significance, say exactly that.",
+    },
+    bullets: {
+      type: "array",
+      description: "Up to 4 short factual key points drawn only from the material provided.",
+      items: { type: "string" },
+    },
+    entities: {
+      type: "array",
+      description: "People, organisations and places named in the material provided.",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          type: {
+            type: "string",
+            enum: ["PERSON", "ORGANISATION", "PLACE", "EVENT", "POLICY", "OTHER"],
+          },
+        },
+        required: ["name", "type"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["summary", "whyItMatters", "bullets", "entities"],
+  additionalProperties: false,
+} as const;
 
 export class AnthropicProvider implements AiProvider {
   readonly name = "anthropic";
@@ -95,10 +152,26 @@ export class AnthropicProvider implements AiProvider {
       const response = await client.messages.create({
         model: this.model,
         max_tokens: 8_000,
-        system: `${EDITORIAL_RULES}\n\n${OUTPUT_CONTRACT}`,
+        // The editorial rules are byte-identical on every story, so they are
+        // cached rather than re-billed several hundred times a day. This is
+        // the whole prefix: `system` is rendered before `messages`, and the
+        // per-story prompt sits after it, so the cache stays warm across the
+        // batch. Verified via usage.cache_read_input_tokens below.
+        system: [
+          {
+            type: "text",
+            text: `${EDITORIAL_RULES}\n\n${OUTPUT_CONTRACT}`,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
         // Bulk enrichment over short inputs: low effort is the right cost /
         // quality point and keeps the pipeline fast.
-        output_config: { effort: "low" },
+        output_config: {
+          effort: "low",
+          // Constrain generation to the contract instead of asking politely
+          // for JSON and parsing whatever comes back.
+          format: { type: "json_schema", schema: OUTPUT_SCHEMA },
+        },
         messages: [{ role: "user", content: buildPrompt(request) }],
       });
 
@@ -158,6 +231,12 @@ export class AnthropicProvider implements AiProvider {
         data: validated.data,
         provider: this.name,
         model: response.model ?? this.model,
+        usage: {
+          inputTokens: response.usage?.input_tokens ?? 0,
+          outputTokens: response.usage?.output_tokens ?? 0,
+          cacheReadTokens: response.usage?.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: response.usage?.cache_creation_input_tokens ?? 0,
+        },
       };
     } catch (error) {
       return {

@@ -23,11 +23,26 @@ export interface EnrichmentRequest {
   relatedHeadlines?: string[];
 }
 
+/**
+ * Token accounting for one enrichment call.
+ *
+ * Reported so cost is something we measure rather than assume — a run that
+ * shows `cacheRead` stuck at zero means the shared system prompt is being
+ * re-billed on every story and the caching has silently broken.
+ */
+export interface EnrichmentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 export interface EnrichmentSuccess {
   ok: true;
   data: AiEnrichment;
   provider: string;
   model: string;
+  usage?: EnrichmentUsage;
 }
 
 export interface EnrichmentFailure {
