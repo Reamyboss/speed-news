@@ -5,11 +5,13 @@ import { fetchFeed, normalizeItem, parseFeed, type NormalizedItem } from "./feed
 import { classifyStory, scoreImportance } from "./classify";
 import {
   CLUSTER_WINDOW_HOURS,
+  buildIdfModel,
   clusterKey,
   fingerprint,
   findCluster,
   findDuplicate,
   type CandidateStory,
+  type IdfModel,
 } from "./dedupe";
 import { toSingleLine, uniqueSlug } from "./text";
 import { isSourceType, type SourceType } from "./taxonomy";
@@ -77,6 +79,12 @@ export interface IngestOptions {
   /** Skip writing an IngestRun row (used by tests). */
   skipRunRecord?: boolean;
   now?: Date;
+  /**
+   * Term-rarity model shared across the run. Built once from the candidate
+   * window by `runIngest`; when omitted, `findCluster` derives one from the
+   * candidates it is given, which is what tests and one-off calls rely on.
+   */
+  idf?: IdfModel;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +180,7 @@ export async function ingestSource(
 
   for (const item of items) {
     try {
-      const stored = await storeItem(item, source, sourceType, working, now);
+      const stored = await storeItem(item, source, sourceType, working, now, options.idf);
       if (stored.status === "created") {
         result.itemsCreated += 1;
         created.push(stored.candidate);
@@ -209,6 +217,7 @@ async function storeItem(
   sourceType: SourceType,
   candidates: CandidateStory[],
   now: Date,
+  idf?: IdfModel,
 ): Promise<StoreOutcome> {
   const print = fingerprint(item.headline, item.summary, item.url);
 
@@ -249,6 +258,7 @@ async function storeItem(
   const clusterMatch = findCluster(
     { headline: item.headline, publishedAt: item.publishedAt, fingerprint: print },
     candidates,
+    idf,
   );
 
   let clusterId: string;
@@ -484,6 +494,11 @@ export async function runIngest(options: IngestOptions = {}): Promise<IngestSumm
   }
 
   const candidates = await loadCandidates(now);
+  // One term-rarity model for the whole run, derived from the recent-story
+  // window. Building it per item would recompute the same map thousands of
+  // times; building it per run keeps clustering decisions consistent across
+  // every source processed in that run.
+  const idf = buildIdfModel(candidates.map((candidate) => candidate.headline));
   const queue = [...sources];
   const results: SourceIngestResult[] = [];
   const allClusters = new Set<string>();
@@ -496,6 +511,7 @@ export async function runIngest(options: IngestOptions = {}): Promise<IngestSumm
       const { result, created, clusters } = await ingestSource(source, candidates, {
         ...options,
         now,
+        idf,
       });
       // Newly created stories become candidates for sources processed later,
       // so cross-source clustering works within a single run.

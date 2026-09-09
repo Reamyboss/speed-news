@@ -31,3 +31,6 @@ coverage/
 # Probe/verification artefacts
 probe-report.json
 *-check.html
+
+# Clustering evaluation dumps (derived from the database, regenerate locally)
+tools/*.json
