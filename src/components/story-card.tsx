@@ -62,8 +62,21 @@ export function CategoryKicker({ category }: { category: string }) {
   );
 }
 
-/** The single largest story on the page. */
-export function LeadStoryCard({ story, priority = true }: StoryCardProps) {
+/**
+ * The single largest story on the page.
+ *
+ * `asPageHeading` makes the headline the page's <h1>. The homepage has no
+ * other candidate — its title is the lead story — and a page without an h1
+ * gives screen-reader users no landmark to orient by and search engines no
+ * primary heading. Pages that already own an <h1> (category, search) leave
+ * this off so the document keeps a single top-level heading.
+ */
+export function LeadStoryCard({
+  story,
+  priority = true,
+  asPageHeading = false,
+}: StoryCardProps & { asPageHeading?: boolean }) {
+  const Heading = asPageHeading ? "h1" : "h2";
   return (
     <article className="group">
       {story.imageUrl ? (
@@ -83,11 +96,11 @@ export function LeadStoryCard({ story, priority = true }: StoryCardProps) {
 
       <CategoryKicker category={story.category} />
 
-      <h2 className="mt-2 text-[1.75rem] leading-[1.12] sm:text-4xl">
+      <Heading className="mt-2 text-[1.75rem] leading-[1.12] sm:text-4xl">
         <Link href={`/story/${story.slug}`} className="headline-link">
           {story.headline}
         </Link>
-      </h2>
+      </Heading>
 
       <p className="mt-3 text-base leading-relaxed text-ink-soft clamp-3 sm:text-lg">
         {story.ai.summary ?? story.summary}

@@ -46,7 +46,7 @@ export default async function HomePage() {
         {/* --- Lead block ------------------------------------------------- */}
         <div className="grid gap-8 lg:grid-cols-12 lg:gap-10">
           <div className="lg:col-span-8">
-            <LeadStoryCard story={lead} priority />
+            <LeadStoryCard story={lead} priority asPageHeading />
 
             {topStories.length > 0 ? (
               <div className="mt-8 grid gap-6 border-t border-rule pt-6 sm:grid-cols-2 sm:gap-x-8">

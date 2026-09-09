@@ -167,6 +167,38 @@ export interface HomepageData {
 }
 
 /**
+ * Collapses a ranked list so each event appears once.
+ *
+ * Stories in the same cluster are several newsrooms covering ONE event. Left
+ * alone they each compete for their own slot and the front page repeats
+ * itself — a real example from production had "Ododo inaugurates APC peace
+ * committee" filling three of the top ten slots from three papers, and the
+ * same government announcement appearing twice.
+ *
+ * The highest-ranked member survives and carries the corroboration count, so
+ * the page shows the story once and says how many newsrooms have it. That is
+ * the point of clustering: breadth of coverage is a fact ABOUT a story, not a
+ * reason to print it again.
+ *
+ * Order is preserved, so callers keep whatever ranking they asked for.
+ */
+export function collapseByCluster<T extends { id: string; clusterId: string | null }>(
+  stories: T[],
+): T[] {
+  const seenClusters = new Set<string>();
+  const result: T[] = [];
+  for (const story of stories) {
+    // An unclustered story is its own event and always survives.
+    if (story.clusterId) {
+      if (seenClusters.has(story.clusterId)) continue;
+      seenClusters.add(story.clusterId);
+    }
+    result.push(story);
+  }
+  return result;
+}
+
+/**
  * Homepage ranking blends importance with freshness.
  *
  * Importance alone would let a strong story from yesterday outrank live news;
@@ -182,7 +214,9 @@ export async function getHomepage(): Promise<HomepageData> {
         prisma.story.findMany({
           where: { status: "PUBLISHED", publishedAt: { gte: since } },
           orderBy: [{ importance: "desc" }, { publishedAt: "desc" }],
-          take: 13,
+          // Over-fetch: collapsing clusters removes rows, and the page still
+          // needs a lead plus six top stories after that.
+          take: 60,
           select: STORY_SELECT,
         }),
       [],
@@ -193,7 +227,7 @@ export async function getHomepage(): Promise<HomepageData> {
         prisma.story.findMany({
           where: { status: "PUBLISHED" },
           orderBy: { publishedAt: "desc" },
-          take: 14,
+          take: 40,
           select: STORY_SELECT,
         }),
       [],
@@ -208,36 +242,50 @@ export async function getHomepage(): Promise<HomepageData> {
 
   // If nothing was published in the last 48h (a quiet period, or a first run
   // against a stale feed), fall back to the newest stories we do have.
-  const pool = ranked.length > 0 ? ranked : latest.slice(0, 13);
-  const views = pool.map((row) => toStoryView(row as Record<string, unknown>));
-  const seen = new Set(views.map((s) => s.id));
+  const pool = ranked.length > 0 ? ranked : latest;
+  const views = collapseByCluster(
+    pool.map((row) => toStoryView(row as Record<string, unknown>)),
+  ).slice(0, 13);
+
+  // The "latest" rail must not repeat what the ranked block already shows —
+  // neither the same story, nor another newsroom's copy of the same event.
+  const seen = new Set(views.map((story) => story.id));
+  const seenClusters = new Set(
+    views.map((story) => story.clusterId).filter((id): id is string => Boolean(id)),
+  );
 
   const byCategory = await Promise.all(
     CATEGORIES.map(async (category) => ({
       category,
-      stories: (
-        await safeQuery(
-          () =>
-            prisma.story.findMany({
-              where: { status: "PUBLISHED", category },
-              orderBy: [{ publishedAt: "desc" }],
-              take: 5,
-              select: STORY_SELECT,
-            }),
-          [],
-          `homepage.category.${category}`,
-        )
-      ).map((row) => toStoryView(row as Record<string, unknown>)),
+      stories: collapseByCluster(
+        (
+          await safeQuery(
+            () =>
+              prisma.story.findMany({
+                where: { status: "PUBLISHED", category },
+                orderBy: [{ publishedAt: "desc" }],
+                take: 20,
+                select: STORY_SELECT,
+              }),
+            [],
+            `homepage.category.${category}`,
+          )
+        ).map((row) => toStoryView(row as Record<string, unknown>)),
+      ).slice(0, 5),
     })),
   );
 
   return {
     lead: views[0] ?? null,
     topStories: views.slice(1, 7),
-    latest: latest
-      .map((row) => toStoryView(row as Record<string, unknown>))
-      .filter((story) => !seen.has(story.id))
-      .slice(0, 8),
+    latest: collapseByCluster(
+      latest
+        .map((row) => toStoryView(row as Record<string, unknown>))
+        .filter(
+          (story) =>
+            !seen.has(story.id) && !(story.clusterId && seenClusters.has(story.clusterId)),
+        ),
+    ).slice(0, 8),
     byCategory: byCategory.filter((group) => group.stories.length > 0),
     totalStories,
   };
@@ -283,8 +331,14 @@ export async function getCategoryPage(
     safeQuery(() => prisma.story.count({ where }), 0, `category.${category}.count`),
   ]);
 
+  // Collapse repeated coverage WITHIN the page. Pagination offsets stay based
+  // on stories, so paging remains correct and stable; a page that contained
+  // several newsrooms' copies of one event simply renders fewer rows rather
+  // than the same headline three times. `total` remains a story count, which
+  // is what it says it is.
+
   return {
-    stories: rows.map((row) => toStoryView(row as Record<string, unknown>)),
+    stories: collapseByCluster(rows.map((row) => toStoryView(row as Record<string, unknown>))),
     total,
     page: currentPage,
     totalPages: Math.max(1, Math.ceil(total / CATEGORY_PAGE_SIZE)),

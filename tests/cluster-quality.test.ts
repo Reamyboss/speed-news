@@ -10,6 +10,7 @@ import {
   CLUSTER_WEIGHTED_JACCARD,
 } from "../src/lib/dedupe";
 import { titleKey } from "../src/lib/text";
+import { collapseByCluster } from "../src/lib/queries";
 import { CLUSTER_EVAL } from "./fixtures/cluster-eval";
 
 /**
@@ -197,5 +198,46 @@ describe("IDF-weighted overlap", () => {
   it("returns zero for an empty headline rather than dividing by zero", () => {
     const model = buildIdfModel(["something real"]);
     expect(weightedOverlap("", "anything", model)).toEqual({ containment: 0, jaccard: 0 });
+  });
+});
+
+describe("collapsing repeated coverage for display", () => {
+  const story = (id: string, clusterId: string | null) => ({ id, clusterId });
+
+  it("keeps one story per cluster, preserving rank order", () => {
+    const collapsed = collapseByCluster([
+      story("a", "c1"),
+      story("b", "c1"),
+      story("c", "c2"),
+      story("d", "c1"),
+    ]);
+    // The first (highest-ranked) member of each cluster survives.
+    expect(collapsed.map((s) => s.id)).toEqual(["a", "c"]);
+  });
+
+  it("never drops unclustered stories, which are each their own event", () => {
+    const collapsed = collapseByCluster([
+      story("a", null),
+      story("b", null),
+      story("c", null),
+    ]);
+    expect(collapsed.map((s) => s.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("reproduces the production case: one event stops taking three slots", () => {
+    // Tribune, Vanguard and Punch all filed the same Ododo story, and all
+    // three reached the front page before this was fixed.
+    const collapsed = collapseByCluster([
+      story("tribune-ododo", "ododo"),
+      story("vanguard-ododo", "ododo"),
+      story("punch-ododo", "ododo"),
+      story("unrelated", "other"),
+    ]);
+    expect(collapsed).toHaveLength(2);
+    expect(collapsed[0].id).toBe("tribune-ododo");
+  });
+
+  it("passes an empty list through", () => {
+    expect(collapseByCluster([])).toEqual([]);
   });
 });
