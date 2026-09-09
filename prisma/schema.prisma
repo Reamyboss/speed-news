@@ -1,0 +1,232 @@
+// NaijaPulse — AI-Native Nigerian News & Intelligence Platform
+//
+// PORTABILITY CONTRACT (do not break):
+//   * No native enums      -> enum values live in src/lib/taxonomy.ts + Zod
+//   * No scalar lists      -> multi-values are delimited strings or JSON text
+//   * No Json columns      -> JSON is stored as String and parsed at the edge
+// This keeps ONE schema file working on SQLite (local dev / CI, zero infra)
+// and PostgreSQL (production). scripts/set-db-provider.mjs swaps the provider.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// The Source Registry. Every story must trace back to exactly one Source.
+/// Sources are NOT equally reliable — `type` + `trustTier` drive ranking,
+/// display treatment and whether a story may lead the homepage.
+model Source {
+  id       String @id @default(cuid())
+  name     String
+  slug     String @unique
+  /// SourceType: PRIMARY_OFFICIAL | PROFESSIONAL_MEDIA | SPECIALIST_MEDIA |
+  /// DIGITAL_PUBLISHER | INTERNATIONAL_MEDIA | BROADCAST | RADIO | HISTORICAL |
+  /// EXPERT | CREATOR | SOCIAL_SIGNAL | UNVERIFIED
+  type     String
+  country  String @default("NG")
+  region   String @default("ng")
+  language String @default("en")
+
+  /// Comma-delimited category slugs this source usually publishes in.
+  categories String @default("nigeria")
+
+  url        String
+  rssUrl     String?
+  apiUrl     String?
+  /// JSON object string of social handles.
+  socialUrls String?
+
+  /// 1 = highest confidence (primary/official, wire), 5 = unverified signal.
+  trustTier Int    @default(3)
+  /// SourceStatus: ACTIVE | PAUSED | BROKEN | PENDING
+  status    String @default("ACTIVE")
+  /// LicenseMode: RSS_SUMMARY | API_LICENSED | PUBLIC_DOMAIN | OFFICIAL_STATEMENT | PERMITTED_SOCIAL
+  license   String @default("RSS_SUMMARY")
+
+  /// Editorial weight used when ranking the homepage (higher = more prominent).
+  weight Int @default(50)
+
+  lastCheckedAt       DateTime?
+  lastSuccessAt       DateTime?
+  lastErrorAt         DateTime?
+  lastError           String?
+  consecutiveFailures Int       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stories Story[]
+
+  @@index([status, type])
+  @@index([country, trustTier])
+}
+
+/// A single published item. We store a headline plus a short attributed
+/// excerpt and always link out to the origin — we never mirror a full
+/// copyrighted article.
+model Story {
+  id       String  @id @default(cuid())
+  headline String
+  slug     String  @unique
+  dek      String?
+
+  /// Non-AI extractive summary derived from the feed. ALWAYS present, so the
+  /// site renders correctly even when AI enrichment is unavailable.
+  summary String
+  /// Short attributed excerpt only (capped at ingest). Never the full body.
+  excerpt String?
+
+  canonicalUrl String @unique
+
+  sourceId String
+  source   Source  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  author   String?
+
+  publishedAt DateTime
+  fetchedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  /// Category slug — see src/lib/taxonomy.ts
+  category String
+  /// Region slug: ng | africa | world
+  region   String @default("ng")
+  language String @default("en")
+
+  imageUrl    String?
+  imageCredit String?
+
+  /// 0-100 editorial importance used for homepage ranking.
+  importance Int    @default(50)
+  /// StoryStatus: PUBLISHED | DRAFT | HIDDEN
+  status     String @default("PUBLISHED")
+
+  // ---- Deduplication -----------------------------------------------------
+  /// SHA-256 of the normalised canonical URL. Hard uniqueness guard.
+  urlHash  String @unique
+  /// Normalised headline key — catches the same story re-posted at a new URL.
+  titleKey String
+  /// 64-bit simhash (hex) of headline+summary for near-duplicate matching.
+  simhash  String
+
+  // ---- Clustering --------------------------------------------------------
+  clusterId String?
+  cluster   StoryCluster? @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+
+  // ---- AI enrichment (all nullable — the product degrades gracefully) -----
+  aiSummary      String?
+  aiWhyItMatters String?
+  /// JSON array string of key points.
+  aiBullets      String?
+  /// JSON array string of {name,type} entities.
+  aiEntities     String?
+  aiProvider     String?
+  aiModel        String?
+  /// AiStatus: PENDING | OK | FAILED | SKIPPED
+  aiStatus       String    @default("PENDING")
+  aiError        String?
+  aiEnrichedAt   DateTime?
+
+  /// Lowercased headline+summary+source blob powering LIKE-based search.
+  searchText String @default("")
+
+  createdAt DateTime @default(now())
+
+  @@index([status, publishedAt])
+  @@index([status, category, publishedAt])
+  @@index([status, region, publishedAt])
+  @@index([clusterId])
+  @@index([sourceId, publishedAt])
+  @@index([titleKey])
+  @@index([simhash])
+  @@index([aiStatus])
+}
+
+/// A group of stories covering the same underlying event, across sources.
+/// Powers "Related stories" and, later, source comparison + timelines.
+model StoryCluster {
+  id       String @id @default(cuid())
+  /// Deterministic key derived from the normalised lead headline.
+  key      String @unique
+  title    String
+  category String @default("nigeria")
+
+  storyCount  Int      @default(1)
+  /// Distinct sources in the cluster — a proxy for corroboration strength.
+  sourceCount Int      @default(1)
+  firstSeenAt DateTime @default(now())
+  lastStoryAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stories Story[]
+
+  @@index([category, lastStoryAt])
+  @@index([lastStoryAt])
+}
+
+/// Configurable advertising inventory. Placement + provider are data, never
+/// hard-coded, so the ad stack can be swapped without a redeploy.
+model AdSlot {
+  id   String @id @default(cuid())
+  /// Stable lookup key used by <AdSlot slotKey="..." />
+  key  String @unique
+  name String
+
+  /// AdPlacement: TOP_BANNER | IN_FEED | ARTICLE | SIDEBAR | MOBILE_STICKY
+  placement String
+  /// AdProvider: HOUSE | GAM | ADSENSE | CUSTOM_HTML | NONE
+  provider  String @default("HOUSE")
+
+  enabled  Boolean @default(true)
+  priority Int     @default(50)
+
+  /// HOUSE creative fields
+  headline String?
+  body     String?
+  imageUrl String?
+  clickUrl String?
+  label    String  @default("Advertisement")
+
+  /// CUSTOM_HTML / GAM / ADSENSE configuration as a JSON string.
+  config String?
+
+  widthPx  Int?
+  heightPx Int?
+
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([placement, enabled, priority])
+}
+
+/// Observability for the ingest pipeline — surfaced on /api/health.
+model IngestRun {
+  id         String    @id @default(cuid())
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  /// RunStatus: RUNNING | OK | PARTIAL | FAILED
+  status     String    @default("RUNNING")
+
+  sourcesAttempted Int @default(0)
+  sourcesSucceeded Int @default(0)
+  sourcesFailed    Int @default(0)
+
+  itemsSeen       Int @default(0)
+  itemsCreated    Int @default(0)
+  itemsDuplicate  Int @default(0)
+  itemsRejected   Int @default(0)
+  clustersTouched Int @default(0)
+
+  /// JSON array string of {source,error} for failed pulls.
+  errors String?
+
+  @@index([startedAt])
+}

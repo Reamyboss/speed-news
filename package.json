@@ -1,0 +1,53 @@
+{
+  "name": "naijapulse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-Native Nigerian News & Intelligence Platform",
+  "engines": { "node": ">=20.11" },
+  "scripts": {
+    "predev": "node scripts/set-db-provider.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/set-db-provider.mjs && prisma generate",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "db:provider": "node scripts/set-db-provider.mjs",
+    "db:generate": "npm run db:provider && prisma generate",
+    "db:push": "npm run db:provider && prisma db push --skip-generate",
+    "db:migrate": "npm run db:provider && prisma migrate dev",
+    "db:deploy": "npm run db:provider && prisma migrate deploy",
+    "db:studio": "npm run db:provider && prisma studio",
+    "db:reset": "npm run db:provider && prisma db push --force-reset --skip-generate",
+    "seed:sources": "tsx scripts/seed-sources.ts",
+    "ingest": "tsx scripts/ingest.ts",
+    "enrich": "tsx scripts/enrich.ts",
+    "pipeline": "tsx scripts/pipeline.ts",
+    "bootstrap": "npm run db:generate && npm run db:push && npm run seed:sources && npm run pipeline",
+    "pretest": "node scripts/set-db-provider.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "fast-xml-parser": "5.11.1",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.8",
+    "@types/react-dom": "19.2.4",
+    "prisma": "6.19.3",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "5.0.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "0.124.0"
+  }
+}

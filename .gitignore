@@ -1,0 +1,33 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Local database artefacts
+prisma/dev.db
+prisma/dev.db-journal
+prisma/*.db
+prisma/*.db-*
+prisma/migrations_sqlite/
+
+# Generated Prisma client
+src/generated/
+
+.DS_Store
+Thumbs.db
+coverage/
+.vercel
+.vscode/
+.idea/
+
+# Probe/verification artefacts
+probe-report.json
+*-check.html
