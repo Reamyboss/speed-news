@@ -66,7 +66,11 @@ SOURCE → INGEST → NORMALIZE → DEDUPLICATE → STORE → CLUSTER → AI ENR
   duplicate; two newsrooms covering one event is a **cluster**, and both are
   kept because cross-source corroboration is the product.
 - **Cluster** — links coverage of one event, powering "also reported by N other
-  sources" and the corroboration input to ranking.
+  sources" and the corroboration input to ranking. The thresholds are fitted
+  to a hand-labelled set, not guessed: see `tools/README.md` for the tuning
+  loop and `src/lib/dedupe.ts` for the measured precision/recall. Display
+  collapses each cluster to one story, so the front page shows an event once
+  and states how many newsrooms carry it.
 - **AI enrich** (`src/lib/ai/`) — runs *after* publishing, never before.
 
 ### AI is optional by construction
@@ -97,7 +101,8 @@ native enums, no scalar lists, no `Json` columns. Those vocabularies live in
 ## The Source Registry
 
 87 seeded sources in `src/data/sources.ts`, each typed and given a confidence
-tier. **Sources are not treated as equally reliable.** Type and tier drive
+tier. 52 are active and pulling; the rest carry a status explaining why not
+(see `scripts/discover-feeds.ts` and the Source coverage note below). **Sources are not treated as equally reliable.** Type and tier drive
 ranking, display treatment, and whether an item may be presented as
 established reporting at all.
 
@@ -128,7 +133,7 @@ capped at ingest (`MAX_EXCERPT_CHARS`). **Full articles are never mirrored.**
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build and serve |
-| `npm test` | Full test suite (112 tests) |
+| `npm test` | Full test suite (156 tests) |
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run bootstrap` | Schema + seed + first ingest, from scratch |
 | `npm run seed:sources` | Seed/refresh the registry and ad inventory (idempotent) |
@@ -148,7 +153,7 @@ capped at ingest (`MAX_EXCERPT_CHARS`). **Full articles are never mirrored.**
 npm test
 ```
 
-112 tests across five suites. The critical logic named in the brief is covered:
+156 tests across seven suites. The critical logic named in the brief is covered:
 
 - **Source normalization** — `tests/normalization.test.ts` (HTML sanitisation,
   entity decoding, URL canonicalisation, slugs, fingerprints, RSS/Atom parsing)
@@ -160,6 +165,12 @@ npm test
 - **AI enrichment failure handling** — `tests/ai.test.ts` and
   `tests/pipeline.test.ts` (unavailable provider, upstream error, malformed
   JSON, schema rejection, retryable vs terminal)
+- **Clustering accuracy** — `tests/cluster-quality.test.ts`, measured against
+  `tests/fixtures/cluster-eval.ts`: 88 cross-source headline pairs taken from
+  real production data and labelled by hand. Asserts precision stays at 1.000
+  (no two different events ever merged) and names the offending pair when it
+  does not.
+- **Cron authorisation and production config** — `tests/cron-auth.test.ts`
 
 Tests run against their own database (`prisma/test.db`), created and destroyed
 per run. They never touch the development database.

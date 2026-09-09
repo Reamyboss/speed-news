@@ -22,16 +22,19 @@ in `README.md`; if it is listed here, it is **not** built yet.
 - No retention policy. Stories accumulate indefinitely; add an archival job.
 
 ### Ingest
-- ~40% of registry feeds are unreachable from the build environment and were
-  never confirmed working end-to-end. Most Nigerian government agency sites
-  (CBN, NCC, NAFDAC, NDLEA, FRSC, SEC, FIRS, Customs, Immigration, JAMB, WAEC,
-  NECO, NNPC, NERC, National Assembly, INEC, State House) either 404 on
-  `/feed/` or are unreachable. These are seeded as `PENDING`/`BROKEN` and skip
-  cleanly. **Each needs its real feed URL, an API, or an HTML scraper.**
+- 52 of 87 sources are active. `scripts/discover-feeds.ts` recovered NCC, SEC,
+  WAEC, Dataphyte, CNBC Africa and Pulse Nigeria via feed autodiscovery. The
+  remaining 26 publish no discoverable feed at all — mostly Nigerian government
+  agencies (CBN, NAFDAC, NDLEA, FRSC, FIRS, Customs, JAMB, NECO, NNPC, National
+  Assembly, INEC, State House). **Each needs an API, a real endpoint, or
+  nothing.** They skip cleanly.
 - Cloudflare-fronted publishers return 403 to our user agent from this network
-  (Guardian Nigeria, The Nation, TheCable, FIJ, Daily Independent). They may
-  work from a datacenter IP — verify after first deploy and, if not, negotiate
-  access or use a compliant fetch path.
+  (Guardian Nigeria, The Nation, TheCable, FIJ, Daily Independent) and are
+  marked `PAUSED` rather than broken. Verify from a datacenter IP after first
+  deploy; if they still refuse, that is a licensing conversation, not a
+  technical one. **Do not work around an access control.**
+- AFP was found at afp.com/rss.xml but it is their French-language corporate
+  newsroom, not an English wire. Left `PENDING` with the reason recorded.
 - No conditional requests (`ETag`/`If-Modified-Since`), so every run refetches
   every feed in full.
 - No per-source rate limiting or backoff schedule beyond the failure counter.
@@ -51,9 +54,11 @@ assistance). Not built:
 - Ask AI / conversational query over the corpus
 
 ### AI
-- **Structured outputs.** The Anthropic provider prompts for JSON and validates
-  with Zod. Move to `output_config.format` for schema-guaranteed responses.
-- No prompt caching, so the system prompt is re-billed on every story.
+- **Never run against the live API.** Everything below the provider boundary is
+  tested, and the failure path is verified end to end (real request, 401,
+  classified terminal), but no real model response has ever been generated.
+  `npx tsx scripts/ai-smoke.ts --n 5` is the gate; run it before trusting
+  enrichment at scale.
 - No batch API usage — enrichment would be ~50% cheaper via Message Batches.
 - Only one provider implemented behind the abstraction. Add a second to prove
   the seam holds.
@@ -64,10 +69,18 @@ assistance). Not built:
 
 ### Ranking
 - Importance scoring is hand-tuned heuristics. It is transparent and adjustable
-  but has never been measured against human editorial judgement.
+  but has never been measured against human editorial judgement. Clustering
+  now has a labelled eval set; ranking still does not, and it is the more
+  valuable of the two to build next.
 - No personalisation, no reading history, no trending detection.
-- Cluster quality is untested at scale — thresholds in `src/lib/dedupe.ts` were
-  set by inspection and one failing test, not by a labelled dataset.
+- The clustering eval set is 88 pairs from a single 793-story snapshot. It is
+  real data and it caught real defects, but it is small and drawn from one news
+  cycle. Grow it as the corpus grows, especially with pairs that a human finds
+  genuinely ambiguous — those were deliberately excluded rather than guessed.
+- Recall is 0.710 at precision 1.000. The misses are known and listed by
+  `npx tsx tools/tune-thresholds.ts`; most are events described in entirely
+  different words ("Kano loses district head" vs "Tears as popular Kano
+  district head dies"), which needs embeddings rather than token overlap.
 
 ### Product surface
 - No user accounts, saved stories, or newsletters.
