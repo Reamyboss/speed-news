@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PrismaClient } from "@prisma/client";
-import { ingestSource } from "@/lib/ingest";
+import { ingestSource, runIngest } from "@/lib/ingest";
 import { enrichPendingStories } from "@/lib/ai/enrich";
 import { setAiProvider } from "@/lib/ai";
 import { NullProvider } from "@/lib/ai/null-provider";
@@ -534,5 +534,56 @@ describe("the shipped source registry", () => {
     const official = SOURCE_SEED.filter((s) => s.type === "PRIMARY_OFFICIAL");
     expect(official.length).toBeGreaterThan(0);
     for (const source of official) expect(source.trustTier).toBe(1);
+  });
+});
+
+describe("broken-source recovery", () => {
+  it("re-tests a BROKEN source once its backoff has elapsed, and reinstates it", async () => {
+    routes.set("/feed.xml", {
+      status: 200,
+      body: rssFeed([
+        {
+          title: "The publisher fixed their feed and it works again now",
+          link: "https://test.example/recovered",
+        },
+      ]),
+    });
+
+    const source = await makeSource();
+    // Simulate a source that failed out of the rotation some time ago.
+    await prisma.source.update({
+      where: { id: source.id },
+      data: {
+        status: "BROKEN",
+        consecutiveFailures: 6,
+        lastError: "HTTP 500",
+        lastCheckedAt: new Date(Date.now() - 24 * 3_600_000),
+      },
+    });
+
+    const summary = await runIngest({ skipRunRecord: true });
+
+    // BROKEN must not be a one-way door — the source has to be picked up.
+    expect(summary.sourcesAttempted).toBeGreaterThan(0);
+
+    const updated = await prisma.source.findUniqueOrThrow({ where: { id: source.id } });
+    expect(updated.status).toBe("ACTIVE");
+    expect(updated.consecutiveFailures).toBe(0);
+    expect(await prisma.story.count()).toBe(1);
+  });
+
+  it("does not re-test a BROKEN source that was just checked", async () => {
+    const source = await makeSource();
+    await prisma.source.update({
+      where: { id: source.id },
+      data: {
+        status: "BROKEN",
+        consecutiveFailures: 6,
+        lastCheckedAt: new Date(),
+      },
+    });
+
+    const summary = await runIngest({ skipRunRecord: true });
+    expect(summary.sourcesAttempted).toBe(0);
   });
 });

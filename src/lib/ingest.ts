@@ -30,13 +30,26 @@ import { storyDraftSchema } from "./validation";
 /** A source is marked BROKEN after this many consecutive failed pulls. */
 const BROKEN_AFTER_FAILURES = 5;
 
+/**
+ * How long to wait before re-testing a BROKEN source.
+ *
+ * BROKEN must never be a one-way door: publishers have outages, change feed
+ * paths back, and lift blocks. Excluding them permanently would mean the
+ * auto-reinstate path in `recordSourceSuccess` could never fire, so the
+ * registry would decay with every transient failure and never recover.
+ */
+const BROKEN_RETRY_HOURS = 6;
+
 export interface SourceIngestResult {
   sourceSlug: string;
   ok: boolean;
   itemsSeen: number;
   itemsCreated: number;
   itemsDuplicate: number;
+  /** Items normalisation could not use at all (no headline, bad URL). */
   itemsRejected: number;
+  /** Items left for a later run because of the per-source cap. */
+  itemsCapped: number;
   error?: string;
   durationMs: number;
 }
@@ -50,6 +63,7 @@ export interface IngestSummary {
   itemsCreated: number;
   itemsDuplicate: number;
   itemsRejected: number;
+  itemsCapped: number;
   clustersTouched: number;
   results: SourceIngestResult[];
   durationMs: number;
@@ -114,6 +128,7 @@ export async function ingestSource(
     itemsCreated: 0,
     itemsDuplicate: 0,
     itemsRejected: 0,
+    itemsCapped: 0,
     durationMs: 0,
   };
   const created: CandidateStory[] = [];
@@ -131,12 +146,16 @@ export async function ingestSource(
     const parsed = parseFeed(xml, source.rssUrl);
     result.itemsSeen = parsed.items.length;
 
-    items = parsed.items
+    const normalized = parsed.items
       .map((raw) => normalizeItem(raw, { now }))
-      .filter((item): item is NormalizedItem => item !== null)
-      .slice(0, maxItems);
+      .filter((item): item is NormalizedItem => item !== null);
 
-    result.itemsRejected = Math.max(0, parsed.items.length - items.length);
+    // Items dropped by normalisation are genuinely unusable; items beyond the
+    // per-source cap are simply deferred to a later run. Conflating the two
+    // makes a healthy feed look broken in the run report.
+    result.itemsRejected = Math.max(0, parsed.items.length - normalized.length);
+    items = normalized.slice(0, maxItems);
+    result.itemsCapped = Math.max(0, normalized.length - items.length);
   } catch (error) {
     result.error = error instanceof Error ? error.message : String(error);
     result.durationMs = Date.now() - started;
@@ -205,6 +224,16 @@ async function storeItem(
   );
   if (duplicate.isDuplicate) return { status: "duplicate" };
 
+  // The in-memory candidate set only covers a recent window, so an item still
+  // sitting in a feed after that window has passed will not be found above.
+  // One indexed lookup on the unique column settles it, rather than letting
+  // the insert fail and driving control flow from the exception.
+  const alreadyStored = await prisma.story.findUnique({
+    where: { urlHash: print.urlHash },
+    select: { id: true },
+  });
+  if (alreadyStored) return { status: "duplicate" };
+
   // ---- CLASSIFY ----------------------------------------------------------
   const classification = classifyStory({
     headline: item.headline,
@@ -268,6 +297,7 @@ async function storeItem(
     hasImage: Boolean(item.imageUrl),
     corroboratingSources,
     region: classification.region,
+    url: item.url,
     now,
   });
 
@@ -417,12 +447,30 @@ export async function runIngest(options: IngestOptions = {}): Promise<IngestSumm
   const now = options.now ?? new Date();
   const concurrency = Math.max(1, options.concurrency ?? INGEST_CONFIG.concurrency);
 
+  const retryBrokenBefore = new Date(now.getTime() - BROKEN_RETRY_HOURS * 3_600_000);
+
   const sources = await prisma.source.findMany({
     where: {
       rssUrl: { not: null },
       ...(options.slugs?.length
         ? { slug: { in: options.slugs } }
-        : { status: { in: ["ACTIVE", "PENDING"] } }),
+        : {
+            OR: [
+              { status: { in: ["ACTIVE", "PENDING"] } },
+              // Give BROKEN sources a periodic second chance.
+              {
+                AND: [
+                  { status: "BROKEN" },
+                  {
+                    OR: [
+                      { lastCheckedAt: null },
+                      { lastCheckedAt: { lt: retryBrokenBefore } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          }),
     },
     orderBy: [{ weight: "desc" }, { trustTier: "asc" }],
   });
@@ -471,6 +519,7 @@ export async function runIngest(options: IngestOptions = {}): Promise<IngestSumm
     itemsCreated: results.reduce((sum, r) => sum + r.itemsCreated, 0),
     itemsDuplicate: results.reduce((sum, r) => sum + r.itemsDuplicate, 0),
     itemsRejected: results.reduce((sum, r) => sum + r.itemsRejected, 0),
+    itemsCapped: results.reduce((sum, r) => sum + r.itemsCapped, 0),
     clustersTouched: allClusters.size,
     results,
     durationMs: Date.now() - started,

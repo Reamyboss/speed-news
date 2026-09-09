@@ -16,7 +16,14 @@ const TEST_DB_URL = "file:./test.db";
 
 function removeTestDb() {
   for (const suffix of ["", "-journal", "-wal", "-shm"]) {
-    rmSync(`${TEST_DB_FILE}${suffix}`, { force: true });
+    try {
+      rmSync(`${TEST_DB_FILE}${suffix}`, { force: true });
+    } catch {
+      // Windows can still hold a handle to the SQLite file for a moment after
+      // the client disconnects. Failing to delete on teardown is harmless —
+      // setup deletes it again before the next run, which is what guarantees
+      // a clean database. Never fail a green suite on cleanup.
+    }
   }
 }
 

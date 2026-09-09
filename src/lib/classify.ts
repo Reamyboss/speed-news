@@ -269,14 +269,24 @@ export function classifyStory(input: ClassifyInput): ClassifyResult {
     scores.world += 7;
   }
 
-  // The source registry's own declared categories act as a prior.
+  // Evidence drawn from the story ITSELF, before any source-level prior is
+  // mixed in. Keeping these separate matters: a publisher that declares four
+  // categories would otherwise contribute an equal score to all of them and
+  // let the tie-break order — not the story — decide the section.
+  const contentScores = { ...scores };
+  const contentBest = Math.max(...CATEGORIES.map((c) => contentScores[c]));
+
   const declared = (input.sourceCategories ?? "")
     .split(",")
     .map((c) => c.trim().toLowerCase())
     .filter(isCategory);
-  for (const category of declared) {
-    scores[category] += declared.length === 1 ? 4 : 2;
-  }
+
+  // The registry's declared categories are a weak prior, and only the first
+  // one (the source's primary beat) carries real information.
+  declared.forEach((category, index) => {
+    if (declared.length === 1) scores[category] += 4;
+    else scores[category] += index === 0 ? 2 : 1;
+  });
 
   let winner: Category = "nigeria";
   let best = -1;
@@ -287,10 +297,11 @@ export function classifyStory(input: ClassifyInput): ClassifyResult {
     }
   }
 
-  // No evidence at all: fall back to the source's primary declared category.
-  if (best <= 0) {
+  // The story itself said nothing topical. Trust the source's primary beat
+  // rather than letting the tie-break order pick a section at random.
+  if (contentBest <= 0) {
     winner = declared[0] ?? (input.sourceType === "INTERNATIONAL_MEDIA" ? "world" : "nigeria");
-    best = 0;
+    best = scores[winner];
   }
 
   const total = CATEGORIES.reduce((sum, c) => sum + Math.max(0, scores[c]), 0);
@@ -330,6 +341,45 @@ const HIGH_IMPACT_PHRASES = [
 ];
 
 /**
+ * Opinion, columns and editorials.
+ *
+ * These are legitimate journalism but they are argument, not new information,
+ * so they should not lead a news front page. Publishers signal them reliably
+ * in two ways: a "By <Author>" suffix in the headline, and an opinion section
+ * in the URL.
+ */
+const OPINION_URL_HINTS = [
+  "/opinion",
+  "/columnist",
+  "/columns",
+  "/editorial",
+  "/viewpoint",
+  "/perspective",
+  "/blog",
+  "/analysis",
+  "/letters",
+];
+
+export function looksLikeOpinion(headline: string, url?: string | null): boolean {
+  // "Some argument about a thing, By Jane Doe".
+  // `by` is matched case-insensitively by hand rather than with the `i` flag,
+  // because `i` would also make \p{Lu} match a lowercase letter and the
+  // capitalised author name is the part that makes this signal reliable.
+  if (/,\s*[Bb][Yy]\s+\p{Lu}[\p{L}'-]+/u.test(headline)) return true;
+
+  if (url) {
+    let path = "";
+    try {
+      path = new URL(url).pathname.toLowerCase();
+    } catch {
+      path = url.toLowerCase();
+    }
+    if (OPINION_URL_HINTS.some((hint) => path.includes(hint))) return true;
+  }
+  return false;
+}
+
+/**
  * Ceremonial / procedural wire language. These items are legitimate reporting
  * but are rarely what a reader needs at the top of a front page.
  */
@@ -352,6 +402,8 @@ export interface ImportanceInput {
   corroboratingSources?: number;
   /** Story region — this is a Nigeria-first product, so `ng` ranks higher. */
   region?: Region;
+  /** Article URL, used to detect opinion/column sections. */
+  url?: string | null;
   now?: Date;
 }
 
@@ -406,6 +458,10 @@ export function scoreImportance(input: ImportanceInput): number {
   // Routine institutional notices ("urges", "commends", "felicitates") are the
   // bulk of wire filler and should not outrank actual events.
   if (ROUTINE_PHRASES.some((p) => text.includes(p))) score -= 8;
+
+  // Opinion is argument, not new information. It belongs in its section, not
+  // at the top of the front page.
+  if (looksLikeOpinion(input.headline, input.url)) score -= 16;
 
   // Clickbait-ish all-caps headlines get a small penalty.
   const letters = input.headline.replace(/[^A-Za-z]/g, "");

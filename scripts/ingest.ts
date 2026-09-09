@@ -22,7 +22,7 @@ async function main() {
 
   console.log("\n--- INGEST SUMMARY ---");
   console.log(`sources : ${summary.sourcesSucceeded} ok / ${summary.sourcesFailed} failed`);
-  console.log(`items   : ${summary.itemsCreated} created, ${summary.itemsDuplicate} duplicate, ${summary.itemsRejected} rejected (of ${summary.itemsSeen} seen)`);
+  console.log(`items   : ${summary.itemsCreated} created, ${summary.itemsDuplicate} duplicate, ${summary.itemsRejected} unusable, ${summary.itemsCapped} over cap (of ${summary.itemsSeen} seen)`);
   console.log(`clusters: ${summary.clustersTouched} touched`);
   console.log(`took    : ${(summary.durationMs / 1000).toFixed(1)}s`);
 

@@ -1,14 +1,14 @@
 /**
- * Recomputes `importance` for stored stories.
+ * Recomputes `category`, `region` and `importance` for stored stories.
  *
- * Ranking is tuning-sensitive and will change as the product is edited, so
- * this exists to reapply the current scoring rules to existing rows without a
- * re-ingest.
+ * Classification and ranking are tuning-sensitive and will change as the
+ * product is edited, so this reapplies the current rules to existing rows
+ * without a re-ingest.
  *   npx tsx scripts/rescore.ts
  */
 import { prisma } from "../src/lib/db";
-import { scoreImportance } from "../src/lib/classify";
-import { isSourceType, isRegion, type SourceType } from "../src/lib/taxonomy";
+import { classifyStory, scoreImportance } from "../src/lib/classify";
+import { isSourceType, type SourceType } from "../src/lib/taxonomy";
 
 async function main() {
   const stories = await prisma.story.findMany({
@@ -18,10 +18,14 @@ async function main() {
       summary: true,
       publishedAt: true,
       imageUrl: true,
+      canonicalUrl: true,
       region: true,
+      category: true,
       importance: true,
       clusterId: true,
-      source: { select: { trustTier: true, type: true, weight: true } },
+      source: {
+        select: { trustTier: true, type: true, weight: true, categories: true, country: true },
+      },
     },
   });
 
@@ -34,11 +38,21 @@ async function main() {
 
   const now = new Date();
   let changed = 0;
+  let reclassified = 0;
 
   for (const story of stories) {
     const sourceType: SourceType = isSourceType(story.source.type)
       ? story.source.type
       : "UNVERIFIED";
+
+    const classification = classifyStory({
+      headline: story.headline,
+      summary: story.summary,
+      url: story.canonicalUrl,
+      sourceCategories: story.source.categories,
+      sourceType,
+      sourceCountry: story.source.country,
+    });
 
     const importance = scoreImportance({
       headline: story.headline,
@@ -51,17 +65,27 @@ async function main() {
       corroboratingSources: story.clusterId
         ? (clusterSourceCounts.get(story.clusterId) ?? 1)
         : 1,
-      region: isRegion(story.region) ? story.region : undefined,
+      region: classification.region,
+      url: story.canonicalUrl,
       now,
     });
 
-    if (importance !== story.importance) {
-      await prisma.story.update({ where: { id: story.id }, data: { importance } });
+    const categoryChanged = classification.category !== story.category;
+    const regionChanged = classification.region !== story.region;
+
+    if (importance !== story.importance || categoryChanged || regionChanged) {
+      await prisma.story.update({
+        where: { id: story.id },
+        data: { importance, category: classification.category, region: classification.region },
+      });
       changed += 1;
+      if (categoryChanged) reclassified += 1;
     }
   }
 
-  console.log(`Rescored ${stories.length} stories (${changed} changed).`);
+  console.log(
+    `Rescored ${stories.length} stories (${changed} updated, ${reclassified} recategorised).`,
+  );
 
   const top = await prisma.story.findMany({
     take: 10,
