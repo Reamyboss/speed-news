@@ -1,0 +1,13 @@
+# Normalise line endings so editors and scripts on different platforms do not
+# produce whole-file diffs. Without this, a tool that writes LF on a checkout
+# stored as CRLF rewrites every line of the file.
+* text=auto eol=lf
+
+# Binary / generated
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.db binary
+package-lock.json linguist-generated=true -diff
