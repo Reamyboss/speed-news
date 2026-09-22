@@ -31,6 +31,21 @@ export interface EnrichOptions {
   concurrency?: number;
 }
 
+const MAX_ATTEMPTS = 3;
+const MAX_WAIT_MS = 20_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Providers say "try again in 11.09s" on a 429; honour it, within reason. */
+function retryDelayMs(error: string, attempt: number): number {
+  const hinted = /try again in ([\d.]+)\s*(ms|s)/i.exec(error);
+  if (hinted) {
+    const value = Number(hinted[1]) * (hinted[2].toLowerCase() === "ms" ? 1 : 1000);
+    return Math.min(value + 500, MAX_WAIT_MS);
+  }
+  return Math.min(1500 * 2 ** attempt, MAX_WAIT_MS);
+}
+
 export async function enrichPendingStories(
   options: EnrichOptions = {},
 ): Promise<EnrichSummary> {
@@ -109,7 +124,7 @@ export async function enrichPendingStories(
           ).map((s) => s.headline)
         : [];
 
-      const result = await provider.enrich({
+      const request = {
         headline: story.headline,
         summary: story.summary,
         excerpt: story.excerpt,
@@ -118,7 +133,19 @@ export async function enrichPendingStories(
         category: story.category,
         publishedAt: story.publishedAt,
         relatedHeadlines,
-      });
+      };
+
+      // Rate limits and provider load spikes are transient. Retry those with
+      // backoff; terminal failures (bad key, schema rejection) never loop.
+      let result = await provider.enrich(request);
+      for (
+        let attempt = 1;
+        !result.ok && result.retryable && attempt < MAX_ATTEMPTS;
+        attempt++
+      ) {
+        await sleep(retryDelayMs(result.error, attempt));
+        result = await provider.enrich(request);
+      }
 
       if (result.ok) {
         await prisma.story

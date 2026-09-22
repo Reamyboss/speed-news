@@ -54,8 +54,22 @@ export const ANALYTICS = {
 
 export const AI_CONFIG = {
   provider: (process.env.AI_PROVIDER || "").toLowerCase(),
+
+  // Anthropic
   apiKey: process.env.ANTHROPIC_API_KEY || "",
   model: process.env.AI_MODEL || "claude-opus-5",
+
+  // Google Gemini
+  geminiApiKey: process.env.GEMINI_API_KEY || "",
+  geminiModel: process.env.AI_GEMINI_MODEL || "gemini-3.6-flash",
+
+  // Groq
+  groqApiKey: process.env.GROQ_API_KEY || "",
+  groqModel: process.env.AI_GROQ_MODEL || "openai/gpt-oss-20b",
+
+  // Optional future automatic fallback
+  fallbackProvider: (process.env.AI_FALLBACK_PROVIDER || "").toLowerCase(),
+
   batchSize: int(process.env.AI_ENRICH_BATCH_SIZE, 25),
 } as const;
 
@@ -125,11 +139,16 @@ export function productionConfigIssues(): ConfigIssue[] {
     });
   }
 
-  if (!AI_CONFIG.apiKey && AI_CONFIG.provider !== "none") {
+  const hasAiKey = !!(
+    AI_CONFIG.apiKey ||
+    AI_CONFIG.geminiApiKey ||
+    AI_CONFIG.groqApiKey
+  );
+  if (!hasAiKey && AI_CONFIG.provider !== "none") {
     issues.push({
       level: "warning",
       message:
-        "No ANTHROPIC_API_KEY. Stories render with their extractive summaries and " +
+        "No AI provider key (GEMINI_API_KEY, GROQ_API_KEY or ANTHROPIC_API_KEY). Stories render with their extractive summaries and " +
         "no AI briefing — a supported mode, not a fault.",
     });
   }
@@ -142,3 +161,4 @@ export function absoluteUrl(path = "/"): string {
   if (/^https?:\/\//i.test(path)) return path;
   return `${SITE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
+

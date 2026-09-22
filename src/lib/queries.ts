@@ -1,6 +1,7 @@
 import { prisma, safeQuery } from "./db";
 import { CATEGORIES, type Category, isCategory } from "./taxonomy";
 import { sanitizeSearchTerm } from "./validation";
+import { isNonPhotoImage } from "./feed";
 
 /**
  * Every database read used by a page lives here.
@@ -53,6 +54,11 @@ const STORY_SELECT = {
 export interface StoryEntity {
   name: string;
   type: string;
+}
+
+/** Drops logos already stored by earlier ingests, without rewriting the rows. */
+function usableImage(url: string | null): string | null {
+  return url && !isNonPhotoImage(url) ? url : null;
 }
 
 export interface StoryView {
@@ -135,7 +141,7 @@ function toStoryView(row: Record<string, unknown>): StoryView {
     updatedAt: row.updatedAt as Date,
     category: row.category as string,
     region: row.region as string,
-    imageUrl: (row.imageUrl as string | null) ?? null,
+    imageUrl: usableImage(row.imageUrl as string | null),
     imageCredit: (row.imageCredit as string | null) ?? null,
     importance: (row.importance as number) ?? 50,
     clusterId: (row.clusterId as string | null) ?? null,

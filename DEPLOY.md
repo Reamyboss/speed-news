@@ -57,9 +57,16 @@ CRON_SECRET=<openssl rand -hex 32>
 Optional (the site works fully without these):
 
 ```
-AI_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-AI_MODEL=claude-opus-5
+# Pick one primary; an optional second is used automatically when the
+# primary rate-limits or is overloaded (Gemini 503s and Groq free-tier
+# 429s are routine). Providers: gemini | groq | anthropic.
+AI_PROVIDER=gemini
+AI_FALLBACK_PROVIDER=groq
+GEMINI_API_KEY=...
+AI_GEMINI_MODEL=gemini-3.6-flash
+GROQ_API_KEY=gsk_...
+AI_GROQ_MODEL=openai/gpt-oss-20b
+# Or Anthropic: ANTHROPIC_API_KEY=sk-ant-... and AI_MODEL=claude-opus-5
 NEXT_PUBLIC_ANALYTICS_PROVIDER=plausible
 NEXT_PUBLIC_ANALYTICS_DOMAIN=your-domain.com
 ```

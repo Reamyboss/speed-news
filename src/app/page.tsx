@@ -41,8 +41,6 @@ export default async function HomePage() {
           }}
         />
 
-        <AdSlot slotKey="home-top-banner" className="mb-6" />
-
         {/* --- Lead block ------------------------------------------------- */}
         <div className="grid gap-8 lg:grid-cols-12 lg:gap-10">
           <div className="lg:col-span-8">

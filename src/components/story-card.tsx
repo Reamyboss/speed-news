@@ -1,5 +1,5 @@
 import Link from "next/link";
-import Image from "next/image";
+import { StoryImage } from "./story-image";
 import type { StoryView } from "@/lib/queries";
 import { CATEGORY_META, SOURCE_TYPE_META, isCategory, isSourceType } from "@/lib/taxonomy";
 import { isoDate, relativeTime } from "@/lib/format";
@@ -81,16 +81,12 @@ export function LeadStoryCard({
     <article className="group">
       {story.imageUrl ? (
         <Link href={`/story/${story.slug}`} className="block" tabIndex={-1} aria-hidden>
-          <div className="relative mb-4 aspect-[16/9] w-full overflow-hidden rounded-sm bg-sunken">
-            <Image
-              src={story.imageUrl}
-              alt=""
-              fill
-              priority={priority}
-              sizes="(max-width: 767px) 100vw, (max-width: 1023px) 100vw, 66vw"
-              className="object-cover"
-            />
-          </div>
+          <StoryImage
+            src={story.imageUrl}
+            priority={priority}
+            wrapperClassName="mb-4 aspect-[16/9] w-full"
+            sizes="(max-width: 767px) 100vw, (max-width: 1023px) 100vw, 66vw"
+          />
         </Link>
       ) : null}
 
@@ -135,16 +131,11 @@ export function StoryCard({ story }: StoryCardProps) {
           tabIndex={-1}
           aria-hidden
         >
-          <div className="relative h-[72px] w-[96px] overflow-hidden rounded-sm bg-sunken sm:h-[86px] sm:w-[128px]">
-            <Image
-              src={story.imageUrl}
-              alt=""
-              fill
-              sizes="128px"
-              loading="lazy"
-              className="object-cover"
-            />
-          </div>
+          <StoryImage
+            src={story.imageUrl}
+            wrapperClassName="h-[72px] w-[96px] sm:h-[86px] sm:w-[128px]"
+            sizes="128px"
+          />
         </Link>
       ) : null}
     </article>
@@ -171,16 +162,11 @@ export function StoryTile({ story }: StoryCardProps) {
     <article className="group flex flex-col">
       {story.imageUrl ? (
         <Link href={`/story/${story.slug}`} tabIndex={-1} aria-hidden>
-          <div className="relative mb-3 aspect-[16/10] w-full overflow-hidden rounded-sm bg-sunken">
-            <Image
-              src={story.imageUrl}
-              alt=""
-              fill
-              sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 33vw"
-              loading="lazy"
-              className="object-cover"
-            />
-          </div>
+          <StoryImage
+            src={story.imageUrl}
+            wrapperClassName="mb-3 aspect-[16/10] w-full"
+            sizes="(max-width: 639px) 100vw, (max-width: 1023px) 50vw, 33vw"
+          />
         </Link>
       ) : null}
 

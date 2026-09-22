@@ -478,7 +478,11 @@ export function normalizeItem(
   const excerpt = usable ? truncate(toSingleLine(usable), MAX_EXCERPT_CHARS) : null;
 
   const publishedAtInferred = raw.publishedAt === null;
-  const publishedAt = raw.publishedAt ?? now;
+  // Clamp future stamps (publisher clock/timezone skew) to ingest time.
+  const publishedAt =
+    raw.publishedAt && raw.publishedAt.getTime() <= now.getTime()
+      ? raw.publishedAt
+      : now;
 
   return {
     headline,
@@ -493,6 +497,22 @@ export function normalizeItem(
   };
 }
 
+/**
+ * Publisher logos, favicons and placeholders are not story photography. Feeds
+ * routinely fall back to them (Punch alone did so for over a hundred stories),
+ * and rendering one as a lead image reads as a broken page.
+ */
+const NON_PHOTO_RE =
+  /logo|favicon|placeholder|avatar|sprite|no[-_]?image|default[-_](?:image|thumb)|\/icons?[\/.\-_]|blank\./i;
+
+export function isNonPhotoImage(url: string): boolean {
+  try {
+    return NON_PHOTO_RE.test(new URL(url).pathname);
+  } catch {
+    return true;
+  }
+}
+
 /** Only https images are rendered — http assets would break the page over TLS. */
 export function sanitizeImageUrl(url: string | null): string | null {
   if (!url) return null;
@@ -503,6 +523,7 @@ export function sanitizeImageUrl(url: string | null): string | null {
     if (parsed.protocol === "http:") parsed.protocol = "https:";
     if (parsed.protocol !== "https:") return null;
     if (!parsed.hostname.includes(".")) return null;
+    if (isNonPhotoImage(parsed.toString())) return null;
     return parsed.toString();
   } catch {
     return null;

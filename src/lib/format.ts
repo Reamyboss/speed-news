@@ -21,7 +21,9 @@ export function relativeTime(date: Date, now: Date = new Date()): string {
   const diff = date.getTime() - now.getTime();
   const absolute = Math.abs(diff);
 
-  if (absolute < 60_000) return "just now";
+  // News is never in the future. A publisher whose feed is stamped in the
+  // wrong timezone would otherwise read "in 37 minutes" on a live story.
+  if (diff > 0 || absolute < 60_000) return "just now";
 
   for (const [unit, ms] of RELATIVE_UNITS) {
     if (absolute >= ms) {
