@@ -23,7 +23,7 @@
  */
 import { prisma } from "../src/lib/db";
 import { AnthropicProvider } from "../src/lib/ai/anthropic";
-import { significantTokens } from "../src/lib/text";
+import { buildGroundingMaterial, checkGrounding, enrichmentOutputText } from "../src/lib/ai/grounding";
 import type { EnrichmentRequest } from "../src/lib/ai/types";
 
 const argN = process.argv.find((a) => a === "--n");
@@ -52,56 +52,6 @@ const SYNTHETIC: EnrichmentRequest = {
   publishedAt: new Date(),
   relatedHeadlines: ["Central Bank leaves rates unchanged, citing inflation"],
 };
-
-/**
- * Words that routinely appear in a faithful summary without appearing in the
- * source text: connective vocabulary, and the days/months a dateline implies.
- * Excluded so the grounding check flags substance, not grammar.
- */
-const GROUNDING_ALLOWLIST = new Set([
-  "the", "this", "that", "which", "who", "whom", "nigeria", "nigerian", "nigerians",
-  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-  "january", "february", "march", "april", "may", "june", "july", "august",
-  "september", "october", "november", "december",
-  "government", "state", "federal", "national", "country", "report", "reported",
-  "according", "said", "says", "statement", "announced", "authorities", "officials",
-]);
-
-/**
- * Flags content in the model's output that is not supported by the material
- * it was given.
- *
- * Two classes of claim carry most of the risk of a fabricated fact:
- *   - FIGURES. A number in the summary that is not in the source is invented.
- *   - NAMES. A capitalised term not in the source is a person, place or body
- *     the model supplied from its own background knowledge, which the
- *     editorial rules forbid.
- *
- * This is a screen, not a proof: it cannot catch a wrong claim built entirely
- * from words that do appear in the source. It reliably catches the failure
- * mode that matters most here — the model padding a thin feed item with
- * remembered context.
- */
-function checkGrounding(output: string, sourceMaterial: string) {
-  const sourceNumbers = new Set(sourceMaterial.match(/\b\d[\d,.]*\b/g) ?? []);
-  const sourceTokens = new Set(significantTokens(sourceMaterial));
-
-  const unsupportedNumbers = (output.match(/\b\d[\d,.]*\b/g) ?? []).filter((n) => {
-    if (sourceNumbers.has(n)) return false;
-    // "27.5 per cent" restated as "27.5%" is the same figure.
-    return !sourceMaterial.replace(/[,%]/g, "").includes(n.replace(/[,%]/g, ""));
-  });
-
-  // Capitalised words that are not sentence-initial.
-  const capitalised = output.match(/(?<![.!?]\s)(?<!^)\b[A-Z][a-zA-Z'-]{2,}\b/gm) ?? [];
-  const unsupportedNames = [...new Set(capitalised)].filter((word) => {
-    const lower = word.toLowerCase();
-    if (GROUNDING_ALLOWLIST.has(lower)) return false;
-    return !sourceTokens.has(lower);
-  });
-
-  return { unsupportedNumbers, unsupportedNames };
-}
 
 async function loadRequests(): Promise<EnrichmentRequest[]> {
   if (synthetic) return [SYNTHETIC];
@@ -163,7 +113,7 @@ async function main() {
   const started = Date.now();
 
   for (const [index, request] of requests.entries()) {
-    const material = [request.headline, request.summary, request.excerpt ?? ""].join("\n");
+    const material = buildGroundingMaterial(request);
     const result = await provider.enrich(request);
 
     console.log(`\n[${index + 1}] ${request.headline.slice(0, 76)}`);
@@ -191,7 +141,7 @@ async function main() {
     }
 
     // ---- 6. Grounding ----------------------------------------------------
-    const checkText = `${result.data.summary} ${result.data.whyItMatters} ${result.data.bullets.join(" ")}`;
+    const checkText = enrichmentOutputText(result.data);
     const { unsupportedNumbers, unsupportedNames } = checkGrounding(checkText, material);
     if (unsupportedNumbers.length || unsupportedNames.length) {
       totals.ungrounded += 1;

@@ -54,18 +54,38 @@ assistance). Not built:
 - Ask AI / conversational query over the corpus
 
 ### AI
-- **Never run against the live API.** Everything below the provider boundary is
-  tested, and the failure path is verified end to end (real request, 401,
-  classified terminal), but no real model response has ever been generated.
-  `npx tsx scripts/ai-smoke.ts --n 5` is the gate; run it before trusting
-  enrichment at scale.
+- Three providers are implemented behind the `AiProvider` abstraction
+  (`src/lib/ai/anthropic.ts`, `gemini.ts`, `groq.ts`), with automatic fallback
+  to a second provider when the primary rate-limits or errors
+  (`src/lib/ai/enrich.ts`). This proved its worth immediately: Groq's free
+  tier allows ~4 enrichments/minute and Gemini intermittently 503s, so a
+  single-provider run fails constantly at any real batch size.
+- Gemini and Groq have both run against the live API and produced real
+  enrichment for the first 54 published stories this product ever enriched —
+  this is no longer an untested path. `scripts/ai-smoke.ts` still only
+  exercises Anthropic end to end (grounding, cost, cache-hit checks); extend
+  it to Gemini/Groq, or fold it into `tools/eval-ai.ts`.
 - No batch API usage — enrichment would be ~50% cheaper via Message Batches.
-- Only one provider implemented behind the abstraction. Add a second to prove
-  the seam holds.
-- No evaluation set for summary quality or hallucination rate. **This should be
-  the first thing built before AI output is trusted at scale.**
 - Enrichment is not incremental: a story is enriched once and never revisited
   when the cluster gains corroborating sources.
+- **Evaluation set for hallucination rate: built.** `tests/fixtures/ai-eval.ts`
+  (19 real cases + 6 cases with a single fabricated figure or name injected)
+  and `tools/eval-ai.ts` / `npm test -- ai-quality` measure the grounding
+  checker (`src/lib/ai/grounding.ts`) at precision 1.000 / recall 1.000 as of
+  writing. Building it caught three real defects in the checker before they
+  shipped further (source name and sibling headlines excluded from the
+  material; bullets scanned as one run-on sentence; standard abbreviations
+  like "LGA"/"US" flagged as invented) — see the fixture file's header. Real
+  caveats, same honest spirit as clustering's eval set below:
+  - Every real case so far came back clean. The set has never seen a genuine
+    hallucination, only synthetic ones. If production ever produces a real
+    one, it should replace an injected case rather than sit alongside it.
+  - It is a *grounding* check — numbers and proper nouns present in the
+    supplied material — not a judge of whether correctly-grounded output is
+    actually a *good* summary. Fluency, completeness, and whether
+    "why it matters" is genuinely insightful are still unmeasured.
+  - 25 cases from the first batch Gemini/Groq ever enriched. Grow it as more
+    real output accumulates, the same way the clustering set should grow.
 
 ### Ranking
 - Importance scoring is hand-tuned heuristics. It is transparent and adjustable
